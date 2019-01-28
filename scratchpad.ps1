@@ -91,91 +91,125 @@ function prompt {
 }
 
 
-
-$labsize = [Ordered]@{
-    Small = [Ordered]@{
-        VMs = 9
-        ResourceGroups = 3
-        VMsPerRG = 3
-        AVSetsPerRG = 1
-        VMsPerAS = 2
-        NonASVMsPerRG = 1
-    }
-    Medium = [Ordered]@{
-        VMs = 24
-        ResourceGroups = 4
-        VMsPerRG = 6
-        AVSetsPerRG = 2
-        VMsPerAS = 2
-        NonASVMsPerRG = 2
-    }
-    Large = [Ordered]@{
-        VMs = 63
-        ResourceGroups = 7
-        VMsPerRG = 9
-        AVSetsPerRG = 2
-        VMsPerAS = 4
-        NonASVMsPerRG = 1
-    }
-}
-
 Function Generate-LabDetails {
     [CmdletBinding()]
     Param(
-        [Parameter(ValueFromPipeline=$true)]
-        [System.Collections.Hashtable[]]$Labsize
+        [Parameter(Mandatory=$true)]
+        [ValidateSet("Small","Medium","Large")]
+        [string]$Size,
+        [Parameter(Mandatory=$true)]
+        [ValidateSet("Windows","Linux","Both")]
+        [string]$OperatingSystem
     )
 
-    [System.Collections.Hashtable]$LabDetails = @{}
+    
+    Switch($Size) {
+        Small {
+            $Labsize = [Ordered]@{
+                VMs = 9
+                ResourceGroups = 3
+                VMsPerRG = 3
+                AVSetsPerRG = 1
+                VMsPerAS = 2
+                NonASVMsPerRG = 1
+            }
+        }
+        Medium {
+            $Labsize = [Ordered]@{
+                VMs = 24
+                ResourceGroups = 4
+                VMsPerRG = 6
+                AVSetsPerRG = 2
+                VMsPerAS = 2
+                NonASVMsPerRG = 2
+            }
+        }
+        Large {
+            $Labsize = [Ordered]@{
+                VMs = 63
+                ResourceGroups = 7
+                VMsPerRG = 9
+                AVSetsPerRG = 2
+                VMsPerAS = 4
+                NonASVMsPerRG = 1
+            }
+        }
+    }
+
+    Switch ($OperatingSystem) {
+        "Windows" {[System.Collections.ArrayList]$OS = @("Windows")}
+        "Linux" {[System.Collections.ArrayList]$OS = @("Linux")}
+        "Both" {[System.Collections.ArrayList]$OS = @("Windows","Linux")}
+    }
+
+    $Elements = ("carbon","hellium","neon","argon","krypton","xenon","radon")
+    [System.Collections.Hashtable]$LabDetails = [Ordered]@{}
     For ($i=0;$i -lt $Labsize.ResourceGroups;$i++) {
-
-        $Element = ("carbon","hellium","neon","argon","krypton","xenon","radon")[$i % $Labsize.ResourceGroups]
+        $Element = $Elements[$i % $Labsize.ResourceGroups]
         $AVSets = 1..$Labsize.AVSetsPerRG | % {("lab-{0}-as{1}" -f $Element,$_)}
-        $VMs = 1..$Labsize.VMsPerRG | % {("lab-vm{0}-{1}" -f $_,((([char[]]([char]97..[char]122)) + 0..9 | sort {Get-Random})[0..6] -join ""))}
-        $AVSetEndIndex = (($labsize.VMsPerAS * $labsize.AVSetsPerRG) - 1)
+        $VMs = 1..$Labsize.VMsPerRG | % {("lab-{0}-vm{1}-{2}" -f $Element,$_,((([char[]]([char]97..[char]122)) + 0..9 | sort {Get-Random})[0..6] -join ""))}
+        $ASVMRange = (($labsize.VMsPerAS * $labsize.AVSetsPerRG) - 1)
+        $NonASVMRange = $ASVMRange + 1
 
-        $tmpVMHash = Split-Array -InputObject $VMs[0..$AVSetEndIndex] -Parts $Labsize.AVSetsPerRG -KeyType  ByIndex
+        $tmpVMHash = Split-Array -InputObject $VMs[0..$ASVMRange] -Parts $Labsize.AVSetsPerRG -KeyType  ByIndex
+        $tmpOSHash = Split-Array -InputObject $VMs -Parts $OS.Count -KeyType ByIndex
+        $tmpOSHashKeys = ($tmpOSHash.Keys | Sort) | % {$_}
         $tmpVMHashKeys = ($tmpVMHash.Keys | Sort) | % {$_}
 
         $LabDetails.$($Element) = @{
             ResourceGroup = ("lab-{0}-rg" -f $Element)
+            AvailabilitySets = $AVSets
             VirtualMachines = [Ordered]@{}
         }
 
-        $VMs | ForEach-Object {$LabDetails.$($Element).VirtualMachines.$_ = @{
-            AvailabilitySetName = ""
-        }}
-        
-        For ($i=0;$i -lt $tmpVMHashKeys.Count;$i++) {
-            $AVSetName = $AVSets[$i % $tmpVMHashKeys.Count]
-            $tmpVMHashKey = $tmpVMHashKeys[$i]
-            $tmpVM = $tmpVMHash[$tmpVMHashKey]
-            $LabDetails.$($Element).VirtualMachines.$tmpVM.AvailabilitySetName = $AVSetName
+        If ($OS.Count -eq 1) {
+            For ($x=0;$x -lt $tmpVMHashKeys.Count;$x++) {
+                $AVSetName = $AVSets[$x % $tmpVMHashKeys.Count]
+                $tmpVMHashKey = $tmpVMHashKeys[$x]
+                Foreach ($VM in $tmpVMHash[$tmpVMHashKey]) {
+                    $LabDetails.$($Element).VirtualMachines.$($VM) = [Ordered]@{
+                        AvailabilitySet = $AVSetName
+                        OperatingSystem = [String]$OS
+                    }
+                }
+            }
+
+            $VMs[$NonASVMRange..$VMs.Count] | % {
+                $VM = $_
+                $LabDetails.$($Element).VirtualMachines.$($VM) = [Ordered]@{
+                    AvailabilitySet = ""
+                    OperatingSystem = [String]$OS
+                }
+            }
+        }
+        Else {
+            For ($x=0;$x -lt $tmpVMHashKeys.Count;$x++) {
+                $AVSetName = $AVSets[$x % $tmpVMHashKeys.Count]
+                $tmpVMHashKey = $tmpVMHashKeys[$x]
+                Foreach ($VM in $tmpVMHash[$tmpVMHashKey]) {
+                    $LabDetails.$($Element).VirtualMachines.$($VM) = [Ordered]@{
+                        AvailabilitySet = $AVSetName
+                        OperatingSystem = $OS
+                    }
+                }
+            }
+
+            $VMs[$NonASVMRange..$VMs.Count] | % {
+                $VM = $_
+                $LabDetails.$($Element).VirtualMachines.$($VM) = [Ordered]@{
+                    AvailabilitySet = ""
+                    OperatingSystem = $OS
+                }
+            }
+
+            For ($a=0;$a -lt $tmpOSHashKeys.Count;$a++) {
+                $OSName = $OS[$a % $tmpOSHashKeys.Count]
+                $tmpOSHashKey = $tmpOSHashKeys[$a]
+                Foreach ($VM in $tmpOSHash[$tmpOSHashKey]) {
+                    $LabDetails.$($Element).VirtualMachines.$($VM).OperatingSystem = $OSName
+                }
+            }
         }
     }
-
-
-    Write-Debug "Splitting the `$Results Array"
-    $tmpHash = Split-Array -InputObject $Results -Parts $GroupCount -KeyType ByIndex
-    $tmpHashKeys = ($tmpHash.Keys | Sort) | % {$_}
-    Write-Verbose ("Multi-threading the results in to {0} background jobs..." -f $tmpHashKeys.Count)
-    For ($i = 0; $i -lt $tmpHashKeys.Count; $i++) {
-        #$MAIdentity = $MAIdentities[$i % $GroupCount]
-        $CloudAccount = $CloudAccountNames[$i % $GroupCount]
-        $tmpHashKey = $tmpHashKeys[$i]
-        [Void]$UserHash.Add($CloudAccount,$tmpHash[$tmpHashKey])
-    }
-
-    [System.Collections.ArrayList]$ASNames = @()
-    Foreach ($Name in $RGNames) {
-        1..$Labsize.AVSetsPerRG | ForEach-Object {
-            $element = $name.Split("-")[1]
-            $AS = ("lab-{0}-as{1}" -f $element,$_)
-            [Void]$ASNames.Add($AS)
-        }
-    }
-
-    
-
-
+    Return $LabDetails
 }
