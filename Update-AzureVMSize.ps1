@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 Param(
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory=$true,HelpMessage="Please select a predefined value: 'AvailabilitySetsOnly','StandaloneVMs', or 'ALL'")]
     [ValidateSet("AvailabilitySetsOnly","StandaloneVMs","ALL")]
     [String]$VirtualMachineTypes
 )
